@@ -8,6 +8,8 @@
 -export([decode_user_interaction/1]).
 -export([decode_payment/3]).
 -export([decode_refund/2]).
+% -export([decode_chargeback/2]).
+% -export([decode_chargeback_status/2]).
 -export([decode_invoice/1]).
 -export([decode_invoice_cart/1]).
 -export([decode_invoice_line_tax_mode/1]).
@@ -205,6 +207,38 @@ payment_error_client_maping({authorization_failed, {insufficient_funds, _}}) ->
     <<"InsufficientFunds">>;
 payment_error_client_maping(_) ->
     <<"PaymentRejected">>.
+
+% -spec decode_chargeback(capi_handler_encoder:encode_data(), processing_context()) ->
+%     capi_handler_decoder_utils:decode_data().
+
+% decode_chargeback(Chargeback, Context) ->
+%     #domain_Cash{amount = Amount, currency = Currency} = Chargeback#domain_InvoicePaymentChargeback.cash,
+%     capi_handler_utils:merge_and_compact(
+%         #{
+%             <<"id"       >> => Chargeback#domain_InvoicePaymentChargeback.id,
+%             <<"createdAt">> => Chargeback#domain_InvoicePaymentChargeback.created_at,
+%             <<"reasonCode"   >> => Chargeback#domain_InvoicePaymentChargeback.reason_code,
+%             <<"amount"   >> => Amount,
+%             <<"currency" >> => capi_handler_decoder_utils:decode_currency(Currency)
+%         },
+%         decode_chargeback_status(Chargeback#domain_InvoicePaymentChargeback.status, Context)
+%     ).
+
+% -spec decode_chargeback({atom(), _}, processing_context()) ->
+%     capi_handler_decoder_utils:decode_data().
+
+% decode_chargeback_status({Status, StatusInfo}, Context) ->
+%     Error =
+%         case StatusInfo of
+%             #domain_InvoicePaymentChargebackFailed{failure = OperationFailure} ->
+%                 capi_handler_decoder_utils:decode_operation_failure(OperationFailure, Context);
+%             _ ->
+%                 undefined
+%         end,
+%     #{
+%         <<"status">> => genlib:to_binary(Status),
+%         <<"error" >> => Error
+%     }.
 
 -spec decode_refund(capi_handler_encoder:encode_data(), processing_context()) ->
     capi_handler_decoder_utils:decode_data().
