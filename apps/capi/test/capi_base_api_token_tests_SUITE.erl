@@ -541,9 +541,28 @@ get_failed_payment_with_invalid_cvv(Config) ->
 % -spec create_chargeback(config()) ->
 %     _.
 % create_chargeback(Config) ->
-%     capi_ct_helper:mock_services([{invoicing, fun('CreateChargeback', _) -> {ok, ?REFUND} end}], Config),
+%     capi_ct_helper:mock_services([{invoicing, fun('CreateChargeback', _) -> {ok, ?CHARGEBACK} end}], Config),
 %     Req = #{<<"reason">> => ?STRING},
 %     {ok, _} = capi_client_payments:create_chargeback(?config(context, Config), Req, ?STRING, ?STRING).
+
+% -spec create_chargeback_error(config()) ->
+%     _.
+% create_chargeback_error(Config) ->
+%     capi_ct_helper:mock_services([
+%         {invoicing, fun
+%             ('CreateChargeback', [_, <<"42">> | _]) ->
+%                 throw(#payproc_InvalidPartyStatus{
+%                     status = {blocking, {blocked, #domain_Blocked{reason = ?STRING, since = ?TIMESTAMP}}}
+%                 });
+%             ('CreateChargeback', [_, <<"43">> | _]) ->
+%                 throw(#payproc_InvalidContractStatus{
+%                     status = {expired, #domain_ContractExpired{}}
+%                 })
+%         end}
+%     ], Config),
+%     Req = #{<<"reason">> => ?STRING},
+%     {error, {400, _}} = capi_client_payments:create_chargeback(?config(context, Config), Req, <<"42">>, ?STRING),
+%     {error, {400, _}} = capi_client_payments:create_chargeback(?config(context, Config), Req, <<"43">>, ?STRING).
 
 %% TODO WIP: chargebacks
 
