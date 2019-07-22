@@ -206,6 +206,15 @@
     cash = ?CASH
 }).
 
+% -define(CHARGEBACK, #domain_InvoicePaymentChargeback{
+%     id = ?STRING,
+%     status = {pending, #domain_InvoicePaymentRefundPending{}},
+%     created_at = ?TIMESTAMP,
+%     domain_revision = ?INTEGER,
+%     reason_code = ?STRING,
+%     cash = ?CASH
+% }).
+
 -define(CONTRACT, #domain_Contract{
     id = ?STRING,
     contractor = ?CONTRACTOR,
