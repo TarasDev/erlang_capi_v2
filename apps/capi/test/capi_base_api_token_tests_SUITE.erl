@@ -47,6 +47,15 @@
     create_partial_refund_without_currency/1,
     get_refund_by_id/1,
     get_refunds/1,
+
+    % create_chargeback/1,
+    % create_chargeback_error/1,
+    % create_partial_chargeback/1,
+    % create_partial_chargeback_without_currency/1,
+    % get_chargeback_by_id/1,
+    % get_chargebacks/1,
+    % update_chargeback/1,
+
     update_invoice_template_ok_test/1,
     delete_invoice_template_ok_test/1,
     get_account_by_id_ok_test/1,
@@ -80,6 +89,9 @@
     search_invoices_ok_test/1,
     search_payments_ok_test/1,
     search_refunds_ok_test/1,
+
+    % search_chargebacks_ok_test/1,
+
     search_payouts_ok_test/1,
     get_payment_conversion_stats_ok_test/1,
     get_payment_revenue_stats_ok_test/1,
@@ -150,6 +162,15 @@ groups() ->
                 create_partial_refund_without_currency,
                 get_refund_by_id,
                 get_refunds,
+
+                % create_chargeback/1,
+                % create_chargeback_error/1,
+                % create_partial_chargeback/1,
+                % create_partial_chargeback_without_currency/1,
+                % get_chargeback_by_id/1,
+                % get_chargebacks/1,
+                % update_chargeback/1,
+
                 update_invoice_template_ok_test,
                 delete_invoice_template_ok_test,
                 get_account_by_id_ok_test,
@@ -183,6 +204,9 @@ groups() ->
                 search_invoices_ok_test,
                 search_payments_ok_test,
                 search_refunds_ok_test,
+
+                % search_chargebacks_ok_test,
+
                 search_payouts_ok_test,
                 get_payment_conversion_stats_ok_test,
                 get_payment_revenue_stats_ok_test,
@@ -511,6 +535,17 @@ get_failed_payment_with_invalid_cvv(Config) ->
     % mock_services([{invoicing, fun('GetPayment', _) -> {ok, ?PAYPROC_PAYMENT} end}], Config),
     capi_client_payments:get_payment_by_id(?config(context, Config), ?STRING, ?STRING).
 
+
+%% TODO WIP: chargebacks
+
+% -spec create_chargeback(config()) ->
+%     _.
+% create_chargeback(Config) ->
+%     capi_ct_helper:mock_services([{invoicing, fun('CreateChargeback', _) -> {ok, ?REFUND} end}], Config),
+%     Req = #{<<"reason">> => ?STRING},
+%     {ok, _} = capi_client_payments:create_chargeback(?config(context, Config), Req, ?STRING, ?STRING).
+
+%% TODO WIP: chargebacks
 
 -spec create_refund(config()) ->
     _.
