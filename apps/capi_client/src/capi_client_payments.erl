@@ -10,6 +10,11 @@
 -export([get_refund_by_id/4]).
 -export([create_refund/4]).
 
+% -export([get_chargebacks/3]).
+% -export([get_chargeback_by_id/4]).
+% -export([create_chargeback/4]).
+% -export([update_chargeback_status/4]).
+
 -type context() :: capi_client_lib:context().
 
 -spec get_payments(context(), binary()) -> {ok, term()} | {error, term()}.
