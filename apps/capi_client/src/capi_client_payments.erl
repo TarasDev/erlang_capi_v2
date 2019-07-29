@@ -12,7 +12,7 @@
 
 % -export([get_chargebacks/3]).
 % -export([get_chargeback_by_id/4]).
-% -export([create_chargeback/4]).
+-export([create_chargeback/4]).
 % -export([update_chargeback_status/4]).
 
 -type context() :: capi_client_lib:context().
@@ -132,5 +132,18 @@ create_refund(Context, Request, InvoiceID, PaymentID) ->
     },
     {Url, PreparedParams, Opts} = capi_client_lib:make_request(Context, Params),
     Response = swag_client_payments_api:create_refund(Url, PreparedParams, Opts),
+    capi_client_lib:handle_response(Response).
+
+-spec create_chargeback(context(), map(), binary(), binary()) -> {ok, term()} | {error, term()}.
+create_chargeback(Context, Request, InvoiceID, PaymentID) ->
+    Params = #{
+        binding => #{
+            <<"invoiceID">> => InvoiceID,
+            <<"paymentID">> => PaymentID
+        },
+        body => Request
+    },
+    {Url, PreparedParams, Opts} = capi_client_lib:make_request(Context, Params),
+    Response = swag_client_payments_api:create_chargeback(Url, PreparedParams, Opts),
     capi_client_lib:handle_response(Response).
 

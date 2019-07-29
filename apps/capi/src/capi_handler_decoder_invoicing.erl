@@ -215,11 +215,11 @@ payment_error_client_maping(_) ->
 %     #domain_Cash{amount = Amount, currency = Currency} = Chargeback#domain_InvoicePaymentChargeback.cash,
 %     capi_handler_utils:merge_and_compact(
 %         #{
-%             <<"id"       >> => Chargeback#domain_InvoicePaymentChargeback.id,
-%             <<"createdAt">> => Chargeback#domain_InvoicePaymentChargeback.created_at,
-%             <<"reasonCode"   >> => Chargeback#domain_InvoicePaymentChargeback.reason_code,
-%             <<"amount"   >> => Amount,
-%             <<"currency" >> => capi_handler_decoder_utils:decode_currency(Currency)
+%             <<"id"         >> => Chargeback#domain_InvoicePaymentChargeback.id,
+%             <<"createdAt"  >> => Chargeback#domain_InvoicePaymentChargeback.created_at,
+%             <<"reasonCode" >> => Chargeback#domain_InvoicePaymentChargeback.reason_code,
+%             <<"amount"     >> => Amount,
+%             <<"currency"   >> => capi_handler_decoder_utils:decode_currency(Currency)
 %         },
 %         decode_chargeback_status(Chargeback#domain_InvoicePaymentChargeback.status, Context)
 %     ).

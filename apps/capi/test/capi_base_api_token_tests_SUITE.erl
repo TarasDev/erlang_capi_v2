@@ -48,7 +48,7 @@
     get_refund_by_id/1,
     get_refunds/1,
 
-    % create_chargeback/1,
+    create_chargeback/1,
     % create_chargeback_error/1,
     % create_partial_chargeback/1,
     % create_partial_chargeback_without_currency/1,
@@ -538,12 +538,12 @@ get_failed_payment_with_invalid_cvv(Config) ->
 
 %% TODO WIP: chargebacks
 
-% -spec create_chargeback(config()) ->
-%     _.
-% create_chargeback(Config) ->
-%     capi_ct_helper:mock_services([{invoicing, fun('CreateChargeback', _) -> {ok, ?CHARGEBACK} end}], Config),
-%     Req = #{<<"reason">> => ?STRING},
-%     {ok, _} = capi_client_payments:create_chargeback(?config(context, Config), Req, ?STRING, ?STRING).
+-spec create_chargeback(config()) ->
+    _.
+create_chargeback(Config) ->
+    capi_ct_helper:mock_services([{invoicing, fun('CreateChargeback', _) -> {ok, ?CHARGEBACK} end}], Config),
+    Req = #{<<"reason">> => ?STRING},
+    {ok, _} = capi_client_payments:create_chargeback(?config(context, Config), Req, ?STRING, ?STRING).
 
 % -spec create_chargeback_error(config()) ->
 %     _.

@@ -218,70 +218,70 @@ process_request('CapturePayment', Req, Context) ->
 
 % TODO: implement chargebacks
 
-% process_request('CreateChargeback', Req, Context) ->
-%     InvoiceID = maps:get(invoiceID, Req),
-%     PaymentID = maps:get(paymentID, Req),
-%     ChargebackParams = maps:get('ChargebackParams', Req),
-%     Params = #payproc_InvoicePaymentChargebackParams{
-%         reason_code = genlib_map:get(<<"reasonCode">>, ChargebackParams),
-%         cash = encode_optional_cash(ChargebackParams, InvoiceID, PaymentID, Context)
-%     },
-%     Call = {invoicing, 'CreateChargeback', [InvoiceID, PaymentID, Params]},
-%     case capi_handler_utils:service_call_with([user_info], Call, Context) of
-%         {ok, Refund} ->
-%             {ok, {201, #{}, capi_handler_decoder_invoicing:decode_refund(Refund, Context)}};
-%         {exception, Exception} ->
-%             case Exception of
-%                 #payproc_InvalidUser{} ->
-%                     {ok, general_error(404, <<"Invoice not found">>)};
-%                 #payproc_InvoicePaymentNotFound{} ->
-%                     {ok, general_error(404, <<"Payment not found">>)};
-%                 #payproc_InvoiceNotFound{} ->
-%                     {ok, general_error(404, <<"Invoice not found">>)};
-%                 #payproc_InvalidPartyStatus{} ->
-%                     {ok, logic_error(invalidPartyStatus, <<"Invalid party status">>)};
-%                 #payproc_InvalidShopStatus{} ->
-%                     {ok, logic_error(invalidShopStatus, <<"Invalid shop status">>)};
-%                 #payproc_InvalidContractStatus{} ->
-%                     ErrorResp = logic_error(
-%                         invalidContractStatus,
-%                          <<"Invalid contract status">>
-%                     ),
-%                     {ok, ErrorResp};
-%                 #payproc_OperationNotPermitted{} ->
-%                     ErrorResp = logic_error(
-%                         operationNotPermitted,
-%                         <<"Operation not permitted">>
-%                     ),
-%                     {ok, ErrorResp};
-%                 #payproc_InvalidPaymentStatus{} ->
-%                     ErrorResp = logic_error(
-%                         invalidPaymentStatus,
-%                         <<"Invalid invoice payment status">>
-%                     ),
-%                     {ok, ErrorResp};
-%                 #payproc_InsufficientAccountBalance{} ->
-%                     {ok, logic_error(
-%                         insufficentAccountBalance,
-%                         <<"Operation can not be conducted because of insufficient funds on the merchant account">>
-%                     )};
-%                 #payproc_InvoicePaymentAmountExceeded{} ->
-%                     ErrorResp = logic_error(
-%                         invoicePaymentAmountExceeded,
-%                         <<"Payment amount exceeded">>
-%                     ),
-%                     {ok, ErrorResp};
-%                 #payproc_InconsistentChargebackCurrency{} ->
-%                     ErrorResp = logic_error(
-%                         inconsistentChargebackCurrency,
-%                         <<"Inconsistent chargeback currency">>
-%                     ),
-%                     {ok, ErrorResp};
-%                 #'InvalidRequest'{errors = Errors} ->
-%                     FormattedErrors = capi_handler_utils:format_request_errors(Errors),
-%                     {ok, logic_error(invalidRequest, FormattedErrors)}
-%             end
-%     end;
+process_request('CreateChargeback', Req, Context) ->
+    InvoiceID = maps:get(invoiceID, Req),
+    PaymentID = maps:get(paymentID, Req),
+    ChargebackParams = maps:get('ChargebackParams', Req),
+    Params = #payproc_InvoicePaymentChargebackParams{
+        reason_code = genlib_map:get(<<"reasonCode">>, ChargebackParams),
+        cash = encode_optional_cash(ChargebackParams, InvoiceID, PaymentID, Context)
+    },
+    Call = {invoicing, 'CreateChargeback', [InvoiceID, PaymentID, Params]},
+    case capi_handler_utils:service_call_with([user_info], Call, Context) of
+        {ok, Refund} ->
+            {ok, {201, #{}, capi_handler_decoder_invoicing:decode_refund(Refund, Context)}};
+        {exception, Exception} ->
+            case Exception of
+                #payproc_InvalidUser{} ->
+                    {ok, general_error(404, <<"Invoice not found">>)};
+                #payproc_InvoicePaymentNotFound{} ->
+                    {ok, general_error(404, <<"Payment not found">>)};
+                #payproc_InvoiceNotFound{} ->
+                    {ok, general_error(404, <<"Invoice not found">>)};
+                #payproc_InvalidPartyStatus{} ->
+                    {ok, logic_error(invalidPartyStatus, <<"Invalid party status">>)};
+                #payproc_InvalidShopStatus{} ->
+                    {ok, logic_error(invalidShopStatus, <<"Invalid shop status">>)};
+                #payproc_InvalidContractStatus{} ->
+                    ErrorResp = logic_error(
+                        invalidContractStatus,
+                         <<"Invalid contract status">>
+                    ),
+                    {ok, ErrorResp};
+                #payproc_OperationNotPermitted{} ->
+                    ErrorResp = logic_error(
+                        operationNotPermitted,
+                        <<"Operation not permitted">>
+                    ),
+                    {ok, ErrorResp};
+                #payproc_InvalidPaymentStatus{} ->
+                    ErrorResp = logic_error(
+                        invalidPaymentStatus,
+                        <<"Invalid invoice payment status">>
+                    ),
+                    {ok, ErrorResp};
+                #payproc_InsufficientAccountBalance{} ->
+                    {ok, logic_error(
+                        insufficentAccountBalance,
+                        <<"Operation can not be conducted because of insufficient funds on the merchant account">>
+                    )};
+                #payproc_InvoicePaymentAmountExceeded{} ->
+                    ErrorResp = logic_error(
+                        invoicePaymentAmountExceeded,
+                        <<"Payment amount exceeded">>
+                    ),
+                    {ok, ErrorResp};
+                % #payproc_InconsistentChargebackCurrency{} ->
+                %     ErrorResp = logic_error(
+                %         inconsistentChargebackCurrency,
+                %         <<"Inconsistent chargeback currency">>
+                %     ),
+                %     {ok, ErrorResp};
+                #'InvalidRequest'{errors = Errors} ->
+                    FormattedErrors = capi_handler_utils:format_request_errors(Errors),
+                    {ok, logic_error(invalidRequest, FormattedErrors)}
+            end
+    end;
 %
 % process_request('GetChargeback', Req, Context) ->
 %     ok.
@@ -292,8 +292,8 @@ process_request('CapturePayment', Req, Context) ->
 %     Status    = maps:get(status, Req),
 %     Call = {invoicing, 'UpdateChargebackStatus', [InvoiceID, PaymentID, Status]},
 %     case capi_handler_utils:service_call_with([user_info], Call, Context) of
-%         {ok, Refund} ->
-%             {ok, {201, #{}, capi_handler_decoder_invoicing:decode_refund(Refund, Context)}};
+%         {ok, Chargeback} ->
+%             {ok, {201, #{}, capi_handler_decoder_invoicing:decode_refund(Chargeback, Context)}};
 %         {exception, Exception} ->
 %             case Exception of
 %                 #payproc_InvalidUser{} ->
