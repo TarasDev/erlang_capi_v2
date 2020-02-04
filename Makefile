@@ -17,13 +17,13 @@ SERVICE_IMAGE_PUSH_TAG ?= $(SERVICE_IMAGE_TAG)
 
 # Base image for the service
 BASE_IMAGE_NAME := service-erlang
-BASE_IMAGE_TAG := 294d280ff42e6c0cc68ab40fe81e76a6262636c4
+BASE_IMAGE_TAG := da0ab769f01b650b389d18fc85e7418e727cbe96
 
-BUILD_IMAGE_TAG := bdc05544014b3475c8e0726d3b3d6fc81b09db96
+BUILD_IMAGE_TAG := 4536c31941b9c27c134e8daf0fd18848809219c9
 
 CALL_ANYWHERE := \
 	submodules \
-	all compile xref lint dialyze test cover \
+	all compile xref lint dialyze update_plt test cover \
 	start devrel release clean distclean \
 	generate regenerate swag_server.regenerate swag_client.regenerate
 
@@ -57,6 +57,9 @@ lint: generate
 
 dialyze:
 	$(REBAR) dialyzer
+
+update_plt:
+	$(REBAR) dialyzer -u true -s false
 
 start: submodules
 	$(REBAR) run

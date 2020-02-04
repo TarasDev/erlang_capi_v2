@@ -2,7 +2,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 
--include_lib("dmsl/include/dmsl_domain_config_thrift.hrl").
+-include_lib("damsel/include/dmsl_domain_config_thrift.hrl").
 -include_lib("capi_dummy_data.hrl").
 -include_lib("jose/include/jose_jwk.hrl").
 
@@ -123,8 +123,8 @@ woody_unexpected_test(Config) ->
     _.
 
 woody_unavailable_test(Config) ->
-    _ = capi_ct_helper:start_app(capi_woody_client, [{service_urls, #{
-        party_management => <<"http://spanish.inquision/v1/partymgmt">>
+    _ = capi_ct_helper:start_app(capi_woody_client, [{services, #{
+        party_management => #{url => <<"http://spanish.inquision/v1/partymgmt">>}
     }}]),
     ?badresp(503) = capi_client_parties:get_my_party(?config(context, Config)).
 
@@ -133,8 +133,8 @@ woody_unavailable_test(Config) ->
 
 woody_retry_test(Config) ->
     _ = capi_ct_helper:start_app(capi_woody_client, [
-        {service_urls, #{
-            party_management => <<"http://spanish.inquision/v1/partymgmt">>
+        {services, #{
+            party_management => #{url => <<"http://spanish.inquision/v1/partymgmt">>}
         }},
         {service_retries, #{
             party_management    => #{

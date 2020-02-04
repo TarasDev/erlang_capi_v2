@@ -1,8 +1,7 @@
 -module(capi_handler_decoder_party).
 
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_domain_thrift.hrl").
--include_lib("dmsl/include/dmsl_merch_stat_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
+-include_lib("damsel/include/dmsl_merch_stat_thrift.hrl").
 
 -export([decode_shop_location/1]).
 -export([decode_shop_details/1]).
@@ -18,6 +17,8 @@
 -export([decode_disposable_payment_resource/1]).
 -export([decode_payout_tool_params/2]).
 -export([decode_payout_tool_details/1]).
+-export([decode_payment_tool_token/1]).
+-export([decode_payment_tool_details/1]).
 
 %%
 
@@ -188,6 +189,9 @@ decode_residence(Residence) when is_atom(Residence) ->
 decode_payment_institution_ref(#domain_PaymentInstitutionRef{id = Ref}) ->
     Ref.
 
+-spec decode_payment_tool_token(capi_handler_encoder:encode_data()) ->
+    binary().
+
 decode_payment_tool_token({bank_card, BankCard}) ->
     decode_bank_card(BankCard);
 decode_payment_tool_token({payment_terminal, PaymentTerminal}) ->
@@ -195,7 +199,9 @@ decode_payment_tool_token({payment_terminal, PaymentTerminal}) ->
 decode_payment_tool_token({digital_wallet, DigitalWallet}) ->
     decode_digital_wallet(DigitalWallet);
 decode_payment_tool_token({crypto_currency, CryptoCurrency}) ->
-    decode_crypto_wallet(CryptoCurrency).
+    decode_crypto_wallet(CryptoCurrency);
+decode_payment_tool_token({mobile_commerce, MobileCommerce}) ->
+    decode_mobile_commerce(MobileCommerce).
 
 decode_bank_card(#domain_BankCard{
     'token'          = Token,
@@ -267,6 +273,24 @@ decode_crypto_wallet(CryptoCurrency) ->
         <<"crypto_currency">> => capi_handler_decoder_utils:convert_crypto_currency_to_swag(CryptoCurrency)
     }).
 
+decode_mobile_commerce(MobileCommerce) ->
+    #domain_MobileCommerce{
+        operator = Operator,
+        phone = #domain_MobilePhone{
+            cc = Cc,
+            ctn = Ctn
+        }
+    } = MobileCommerce,
+    Phone = #{<<"cc">> => Cc, <<"ctn">> => Ctn},
+    capi_utils:map_to_base64url(#{
+       <<"type">> => <<"mobile_commerce">>,
+       <<"phone">> => Phone,
+       <<"operator">> => atom_to_binary(Operator, utf8)
+    }).
+
+-spec decode_payment_tool_details(capi_handler_encoder:encode_data()) ->
+    capi_handler_decoder_utils:decode_data().
+
 decode_payment_tool_details({bank_card, V}) ->
     decode_bank_card_details(V, #{<<"detailsType">> => <<"PaymentToolDetailsBankCard">>});
 decode_payment_tool_details({payment_terminal, V}) ->
@@ -277,11 +301,20 @@ decode_payment_tool_details({crypto_currency, CryptoCurrency}) ->
     #{
         <<"detailsType">> => <<"PaymentToolDetailsCryptoWallet">>,
         <<"cryptoCurrency">> => capi_handler_decoder_utils:convert_crypto_currency_to_swag(CryptoCurrency)
+    };
+decode_payment_tool_details({mobile_commerce, MobileCommerce}) ->
+    #domain_MobileCommerce{
+        phone = Phone
+    } = MobileCommerce,
+    PhoneNumber = gen_phone_number(decode_mobile_phone(Phone)),
+    #{
+        <<"detailsType">> => <<"PaymentToolDetailsMobileCommerce">>,
+        <<"phoneNumber">> => mask_phone_number(PhoneNumber)
     }.
 
 decode_bank_card_details(BankCard, V) ->
     LastDigits = capi_handler_decoder_utils:decode_last_digits(BankCard#domain_BankCard.masked_pan),
-    Bin = BankCard#domain_BankCard.bin,
+    Bin = capi_handler_decoder_utils:decode_bank_card_bin(BankCard#domain_BankCard.bin),
     capi_handler_utils:merge_and_compact(V, #{
         <<"last4">>     => LastDigits,
         <<"first6">>    => Bin,
@@ -385,3 +418,10 @@ decode_international_bank_details(Bank) ->
          <<"countryCode">> => decode_residence(Bank#domain_InternationalBankDetails.country),
          <<"address">>     => Bank#domain_InternationalBankDetails.address
     }).
+
+decode_mobile_phone(#domain_MobilePhone{cc = Cc, ctn = Ctn}) ->
+    #{<<"cc">> => Cc, <<"ctn">> => Ctn}.
+
+gen_phone_number(#{<<"cc">> := Cc, <<"ctn">> := Ctn}) ->
+    <<"+", Cc/binary, Ctn/binary>>.
+

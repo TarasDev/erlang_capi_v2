@@ -1,12 +1,11 @@
 -module(capi_handler_encoder).
 
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_domain_thrift.hrl").
--include_lib("dmsl/include/dmsl_merch_stat_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
+-include_lib("damsel/include/dmsl_merch_stat_thrift.hrl").
 
 -export([encode_contact_info/1]).
 -export([encode_client_info/1]).
--export([encode_payment_tool_token/1]).
+-export([encode_payment_tool/1]).
 -export([encode_cash/1]).
 -export([encode_cash/2]).
 -export([encode_currency/1]).
@@ -41,11 +40,11 @@ encode_client_info(ClientInfo) ->
         ip_address  = maps:get(<<"ip"         >>, ClientInfo)
     }.
 
--spec encode_payment_tool_token(_) ->
+-spec encode_payment_tool(request_data()) ->
     encode_data().
 
-encode_payment_tool_token(Token) ->
-    try capi_utils:base64url_to_map(Token) of
+encode_payment_tool(PaymentTool) ->
+    case PaymentTool of
         #{<<"type">> := <<"bank_card">>} = Encoded ->
             encode_bank_card(Encoded);
         #{<<"type">> := <<"payment_terminal">>} = Encoded ->
@@ -53,17 +52,16 @@ encode_payment_tool_token(Token) ->
         #{<<"type">> := <<"digital_wallet">>} = Encoded ->
             encode_digital_wallet(Encoded);
         #{<<"type">> := <<"crypto_wallet">>} = Encoded ->
-            encode_crypto_wallet(Encoded)
-    catch
-        error:badarg ->
-            erlang:throw(invalid_token)
+            encode_crypto_wallet(Encoded);
+        #{<<"type">> := <<"mobile_commerce">>} = Encoded ->
+            encode_mobile_commerce(Encoded)
     end.
 
 encode_bank_card(BankCard) ->
     {bank_card, #domain_BankCard{
         token          = maps:get(<<"token">>, BankCard),
         payment_system = encode_payment_system(maps:get(<<"payment_system">>, BankCard)),
-        bin            = maps:get(<<"bin">>, BankCard),
+        bin            = maps:get(<<"bin">>, BankCard, <<>>),
         masked_pan     = maps:get(<<"masked_pan">>, BankCard),
         token_provider = encode_token_provider(genlib_map:get(<<"token_provider">>, BankCard)),
         issuer_country = encode_residence(genlib_map:get(<<"issuer_country">>, BankCard)),
@@ -117,6 +115,16 @@ encode_digital_wallet(#{<<"provider">> := Provider, <<"id">> := ID} = Wallet) ->
 
 encode_crypto_wallet(#{<<"crypto_currency">> := CryptoCurrency}) ->
     {crypto_currency, capi_handler_decoder_utils:convert_crypto_currency_from_swag(CryptoCurrency)}.
+
+encode_mobile_commerce(#{<<"phoneNumber">> := PhoneNumber, <<"operator">> := Operator}) ->
+    #{<<"cc">> := Cc, <<"ctn">> := Ctn} = PhoneNumber,
+    {mobile_commerce, #domain_MobileCommerce{
+        operator = binary_to_existing_atom(Operator, utf8),
+        phone = #domain_MobilePhone{
+            cc = Cc,
+            ctn = Ctn
+        }
+    }}.
 
 -spec encode_cash(request_data()) ->
     encode_data().

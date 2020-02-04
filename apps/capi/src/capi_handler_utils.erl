@@ -1,7 +1,6 @@
 -module(capi_handler_utils).
 
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_domain_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
 
 -export([general_error/2]).
 -export([logic_error/2]).
@@ -28,6 +27,7 @@
 -export([wrap_payment_session/2]).
 -export([get_invoice_by_id/2]).
 -export([get_payment_by_id/3]).
+-export([get_refund_by_id/4]).
 -export([get_contract_by_id/2]).
 
 -export([create_dsl/3]).
@@ -303,13 +303,21 @@ wrap_payment_session(ClientInfo, PaymentSession) ->
     woody:result().
 
 get_invoice_by_id(InvoiceID, Context) ->
-    service_call_with([user_info], {invoicing, 'Get', [InvoiceID]}, Context).
+    EventRange = #payproc_EventRange{},
+    Args = [InvoiceID, EventRange],
+    service_call_with([user_info], {invoicing, 'Get', Args}, Context).
 
 -spec get_payment_by_id(binary(), binary(), processing_context()) ->
     woody:result().
 
 get_payment_by_id(InvoiceID, PaymentID, Context) ->
     service_call_with([user_info], {invoicing, 'GetPayment', [InvoiceID, PaymentID]}, Context).
+
+-spec get_refund_by_id(binary(), binary(), binary(), processing_context()) ->
+    woody:result().
+
+get_refund_by_id(InvoiceID, PaymentID, RefundID, Context) ->
+    service_call_with([user_info], {invoicing, 'GetPaymentRefund', [InvoiceID, PaymentID, RefundID]}, Context).
 
 -spec get_contract_by_id(binary(), processing_context()) ->
     woody:result().

@@ -1,7 +1,6 @@
 -module(capi_handler_invoices).
 
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_domain_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
 
 -behaviour(capi_handler).
 -export([process_request/3]).
@@ -64,6 +63,21 @@ process_request('GetInvoiceByID', Req, Context) ->
     case capi_handler_utils:get_invoice_by_id(maps:get(invoiceID, Req), Context) of
         {ok, #'payproc_Invoice'{invoice = Invoice}} ->
             {ok, {200, #{}, capi_handler_decoder_invoicing:decode_invoice(Invoice)}};
+        {exception, Exception} ->
+            case Exception of
+                #payproc_InvalidUser{} ->
+                    {ok, general_error(404, <<"Invoice not found">>)};
+                #payproc_InvoiceNotFound{} ->
+                    {ok, general_error(404, <<"Invoice not found">>)}
+            end
+    end;
+
+process_request('GetInvoiceByExternalID', Req, Context) ->
+    case get_invoice_by_external_id(maps:get(externalID, Req), Context) of
+        {ok, #'payproc_Invoice'{invoice = Invoice}} ->
+            {ok, {200, #{}, capi_handler_decoder_invoicing:decode_invoice(Invoice)}};
+        {error, internal_id_not_found} ->
+             {ok, general_error(404, <<"Invoice not found">>)};
         {exception, Exception} ->
             case Exception of
                 #payproc_InvalidUser{} ->
@@ -149,7 +163,11 @@ process_request('GetInvoiceEvents', Req, Context) ->
     end;
 
 process_request('GetInvoicePaymentMethods', Req, Context) ->
-    case capi_handler_decoder_invoicing:construct_payment_methods(invoicing, [maps:get(invoiceID, Req)], Context) of
+    InvoiceID = maps:get(invoiceID, Req),
+    Party = capi_utils:unwrap(capi_handler_utils:get_my_party(Context)),
+    Revision = Party#domain_Party.revision,
+    Args = [InvoiceID, {revision, Revision}],
+    case capi_handler_decoder_invoicing:construct_payment_methods(invoicing, Args, Context) of
         {ok, PaymentMethods0} when is_list(PaymentMethods0) ->
             PaymentMethods = capi_utils:deduplicate_payment_methods(PaymentMethods0),
             {ok, {200, #{}, PaymentMethods}};
@@ -337,3 +355,13 @@ decode_refund_for_event(#domain_InvoicePaymentRefund{cash = undefined} = Refund,
     {ok, #payproc_InvoicePayment{payment = #domain_InvoicePayment{cost = Cash}}} =
         capi_handler_utils:get_payment_by_id(InvoiceID, PaymentID, Context),
     capi_handler_decoder_invoicing:decode_refund(Refund#domain_InvoicePaymentRefund{cash = Cash}, Context).
+
+get_invoice_by_external_id(ExternalID, #{woody_context := WoodyContext} = Context) ->
+    PartyID    = capi_handler_utils:get_party_id(Context),
+    InvoiceKey = capi_bender:get_idempotent_key('CreateInvoice', PartyID, ExternalID),
+    case capi_bender:get_internal_id(InvoiceKey, WoodyContext) of
+        {ok, InvoiceID, _CtxData} ->
+            capi_handler_utils:get_invoice_by_id(InvoiceID, Context);
+        Error ->
+            Error
+    end.

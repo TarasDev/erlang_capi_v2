@@ -12,8 +12,9 @@
 -export([unwrap/1]).
 -export([define/2]).
 
--export([get_process_metadata/0]).
 -export([deduplicate_payment_methods/1]).
+
+-export([get_unique_id/0]).
 
 -define(MAX_DEADLINE_TIME, 1*60*1000). % 1 min
 
@@ -153,14 +154,6 @@ clamp_max_deadline(Value) when is_integer(Value)->
             Value
     end.
 
--spec get_process_metadata() -> logger:metadata().
-get_process_metadata() ->
-    % perhaps use scopper:collect()?
-    case logger:get_process_metadata() of
-        undefined -> #{};
-        Metadata  -> Metadata
-    end.
-
 -spec deduplicate_payment_methods(list()) -> list().
 
 deduplicate_payment_methods(Methods) ->
@@ -170,8 +163,7 @@ deduplicate_payment_methods(Methods) ->
         end,
         case lists:partition(EqFun, AccIn) of
             {[Alike], NotAlike} ->
-                Merged = lists:umerge(maps:get(<<"paymentSystems">>, Value), maps:get(<<"paymentSystems">>, Alike)),
-                [Value#{<<"paymentSystems">> => Merged} | NotAlike];
+                [merge_payment_methods(Value, Alike) | NotAlike];
             {[], _} ->
                 [Value | AccIn]
         end
@@ -194,6 +186,28 @@ payment_methods_equivalent(#{<<"method">> := M} = M1, #{<<"method">> := M} = M2)
 payment_methods_equivalent(_, _) ->
     false.
 
+merge_payment_methods(#{<<"method">> := M1} = Method, #{<<"method">> := M2} = Alike) when M1 =:= M2 ->
+    do_merge_payment_methods(method_mergable_field(M1), Method, Alike).
+
+method_mergable_field(<<"BankCard">>) ->
+    <<"paymentSystems">>;
+method_mergable_field(<<"PaymentTerminal">>) ->
+    <<"providers">>;
+method_mergable_field(<<"DigitalWallet">>) ->
+    <<"providers">>;
+method_mergable_field(<<"CryptoWallet">>) ->
+    <<"cryptoCurrencies">>;
+method_mergable_field(<<"MobileCommerce">>) ->
+    <<"operators">>.
+
+do_merge_payment_methods(MergableField, Method1, Method2) ->
+    Merged = lists:umerge(maps:get(MergableField, Method1), maps:get(MergableField, Method2)),
+    Method1#{MergableField => Merged}.
+
+-spec get_unique_id() -> binary().
+get_unique_id() ->
+    <<ID:64>> = snowflake:new(),
+    genlib_format:format_int_base(ID, 62).
 %%
 
 -ifdef(TEST).
@@ -262,8 +276,8 @@ no_deduplication_test() ->
     ],
     Methods = deduplicate_payment_methods(Methods).
 
--spec merge_deduplication_test() -> _.
-merge_deduplication_test() ->
+-spec merge_deduplication_card_test() -> _.
+merge_deduplication_card_test() ->
     Systems1 = [
         <<"mastercard">>,
         <<"visa">>,
@@ -294,8 +308,8 @@ merge_deduplication_test() ->
     Merged = lists:umerge(Systems1, Systems2),
     [SamsungPayMethod, #{<<"paymentSystems">> := Merged}] = deduplicate_payment_methods(Methods).
 
--spec complicated_merge_test() -> _.
-complicated_merge_test() ->
+-spec complicated_merge_card_test() -> _.
+complicated_merge_card_test() ->
     Systems1 = [
         <<"mastercard">>,
         <<"visa">>,
@@ -328,5 +342,125 @@ complicated_merge_test() ->
     ],
     Merged = lists:umerge(Systems1, lists:umerge(Systems2, Systems3)),
     [#{<<"paymentSystems">> := Merged}] = deduplicate_payment_methods(Methods).
+
+-spec merge_terminal_test() -> _.
+merge_terminal_test() ->
+    Providers1 = [
+        <<"eurosvet">>,
+        <<"fake">>
+    ],
+    Providers2 = [
+        <<"asian">>,
+        <<"fake">>
+    ],
+    Providers3 = [
+        <<"american">>
+    ],
+    Methods = [
+        #{
+            <<"method">> => <<"PaymentTerminal">>,
+            <<"providers">> => Providers1
+        },
+        #{
+            <<"method">> => <<"PaymentTerminal">>,
+            <<"providers">> => Providers2
+        },
+        #{
+            <<"method">> => <<"PaymentTerminal">>,
+            <<"providers">> => Providers3
+        }
+    ],
+    Merged = lists:umerge(Providers1, lists:umerge(Providers2, Providers3)),
+    [#{<<"providers">> := Merged}] = deduplicate_payment_methods(Methods).
+
+-spec merge_digital_wallet_test() -> _.
+merge_digital_wallet_test() ->
+    Providers1 = [
+        <<"eurosvet">>,
+        <<"fake">>
+    ],
+    Providers2 = [
+        <<"asian">>,
+        <<"fake">>
+    ],
+    Providers3 = [
+        <<"american">>
+    ],
+    Methods = [
+        #{
+            <<"method">> => <<"DigitalWallet">>,
+            <<"providers">> => Providers1
+        },
+        #{
+            <<"method">> => <<"DigitalWallet">>,
+            <<"providers">> => Providers2
+        },
+        #{
+            <<"method">> => <<"DigitalWallet">>,
+            <<"providers">> => Providers3
+        }
+    ],
+    Merged = lists:umerge(Providers1, lists:umerge(Providers2, Providers3)),
+    [#{<<"providers">> := Merged}] = deduplicate_payment_methods(Methods).
+
+-spec merge_crypto_wallet_test() -> _.
+merge_crypto_wallet_test() ->
+    Currencies1 = [
+        <<"bitcoin">>,
+        <<"litecoin">>
+    ],
+    Currencies2 = [
+        <<"bitcoin">>,
+        <<"bla-bla-coin">>
+    ],
+    Currencies3 = [
+        <<"amecoin">>
+    ],
+    Methods = [
+        #{
+            <<"method">> => <<"CryptoWallet">>,
+            <<"cryptoCurrencies">> => Currencies1
+        },
+        #{
+            <<"method">> => <<"CryptoWallet">>,
+            <<"cryptoCurrencies">> => Currencies2
+        },
+        #{
+            <<"method">> => <<"CryptoWallet">>,
+            <<"cryptoCurrencies">> => Currencies3
+        }
+    ],
+    Merged = lists:umerge(Currencies1, lists:umerge(Currencies2, Currencies3)),
+    [#{<<"cryptoCurrencies">> := Merged}] = deduplicate_payment_methods(Methods).
+
+-spec merge_mobile_commerce_test() -> _.
+merge_mobile_commerce_test() ->
+    Operators1 = [
+        <<"gibdd">>,
+        <<"ufms">>
+    ],
+    Operators2 = [
+        <<"fbi">>,
+        <<"fsb">>
+    ],
+    Operators3 = [
+        <<"nsa">>
+    ],
+    Methods = [
+        #{
+            <<"method">> => <<"MobileCommerce">>,
+            <<"operators">> => Operators1
+        },
+        #{
+            <<"method">> => <<"MobileCommerce">>,
+            <<"operators">> => Operators2
+        },
+        #{
+            <<"method">> => <<"MobileCommerce">>,
+            <<"operators">> => Operators3
+        }
+    ],
+    Merged = lists:umerge(Operators1, lists:umerge(Operators2, Operators3)),
+    [#{<<"operators">> := Merged}] = deduplicate_payment_methods(Methods).
 
 -endif.

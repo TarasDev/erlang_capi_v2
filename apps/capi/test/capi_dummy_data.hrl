@@ -67,6 +67,18 @@
     external_id = EID
 }).
 
+-define(INVOICE_CART, [
+    #{
+        <<"taxMode">>  => #{
+            <<"type">> => <<"InvoiceLineTaxVAT">>,
+            <<"rate">> => <<"10%">>
+        },
+        <<"product">>  => ?STRING,
+        <<"price">>    => ?INTEGER,
+        <<"quantity">> => ?INTEGER
+    }
+]).
+
 -define(PAYPROC_INVOICE(Payments), #payproc_Invoice{
     invoice = ?INVOICE,
     payments = Payments
@@ -87,7 +99,18 @@
     product = ?STRING,
     quantity = ?INTEGER,
     price = ?CASH,
-    metadata = #{?STRING => {obj, #{}}}
+    metadata = #{?STRING := {obj, #{}}}
+}).
+
+-define(THRIFT_INVOICE_CART, #domain_InvoiceCart{
+    lines = [
+        #domain_InvoiceLine{
+            product = ?STRING,
+            quantity = ?INTEGER,
+            price = ?CASH,
+            metadata = #{<<"TaxMode">> := {str, <<"10%">>}}
+        }
+    ]
 }).
 
 -define(INVOICE_TPL, #domain_InvoiceTemplate{
@@ -139,6 +162,14 @@
     contact_info = ?CONTACT_INFO
 }}).
 
+-define(CUSTOMER_PAYER, {customer, #domain_CustomerPayer{
+    customer_id         = ?STRING,
+    customer_binding_id = ?STRING,
+    rec_payment_tool_id = ?STRING,
+    payment_tool        = {bank_card, ?BANK_CARD},
+    contact_info        = ?CONTACT_INFO
+}}).
+
 -define(PAYER, {payment_resource, ?PAYMENT_RESOURCE_PAYER}).
 
 -define(PAYMENT(ID, IED, Status), #domain_InvoicePayment{
@@ -152,6 +183,32 @@
     context          = ?CONTENT,
     make_recurrent   = false,
     external_id      = IED
+}).
+
+-define(PAYMENT_WITH_RECURRENT_PAYER, #domain_InvoicePayment{
+    id               = ?STRING,
+    created_at       = ?TIMESTAMP,
+    domain_revision  = ?INTEGER,
+    status           = {pending, #domain_InvoicePaymentPending{}},
+    payer            = ?RECURRENT_PAYER,
+    cost             = ?CASH,
+    flow             = {instant, #domain_InvoicePaymentFlowInstant{}},
+    context          = ?CONTENT,
+    make_recurrent   = false,
+    external_id      = undefined
+}).
+
+-define(PAYMENT_WITH_CUSTOMER_PAYER, #domain_InvoicePayment{
+    id               = ?STRING,
+    created_at       = ?TIMESTAMP,
+    domain_revision  = ?INTEGER,
+    status           = {pending, #domain_InvoicePaymentPending{}},
+    payer            = ?CUSTOMER_PAYER,
+    cost             = ?CASH,
+    flow             = {instant, #domain_InvoicePaymentFlowInstant{}},
+    context          = ?CONTENT,
+    make_recurrent   = false,
+    external_id      = undefined
 }).
 
 -define(PAYMENT, ?PAYMENT(?STRING, undefined, {pending, #domain_InvoicePaymentPending{}})).
@@ -172,9 +229,11 @@
 -define(RECURRENT_PAYMENT, ?RECURRENT_PAYMENT({pending, #domain_InvoicePaymentPending{}})).
 
 -define(PAYPROC_PAYMENT(Payment, Refunds, Adjustments), #payproc_InvoicePayment{
-    payment     = Payment,
-    refunds     = Refunds,
-    adjustments = Adjustments
+    payment        = Payment,
+    refunds        = [#payproc_InvoicePaymentRefund{refund = R, sessions = []} || R <- Refunds],
+    sessions       = [],
+    legacy_refunds = Refunds,
+    adjustments    = Adjustments
 }).
 
 -define(PAYPROC_PAYMENT, ?PAYPROC_PAYMENT(?PAYMENT, [?REFUND], [?ADJUSTMENT])).
@@ -197,13 +256,16 @@
     }
 }).
 
--define(REFUND, #domain_InvoicePaymentRefund{
-    id = ?STRING,
+-define(REFUND, ?REFUND(?STRING, ?STRING)).
+
+-define(REFUND(ID, EID), #domain_InvoicePaymentRefund{
+    id = ID,
     status = {pending, #domain_InvoicePaymentRefundPending{}},
     created_at = ?TIMESTAMP,
     domain_revision = ?INTEGER,
     reason = ?STRING,
-    cash = ?CASH
+    cash = ?CASH,
+    external_id = EID
 }).
 
 % -define(CHARGEBACK, #domain_InvoicePaymentChargeback{
@@ -593,6 +655,8 @@
 
 -define(STAT_RESPONSE_PAYMENTS, ?STAT_RESPONSE({payments,
     [
+        ?STAT_PAYMENT(?STAT_CUSTOMER_PAYER({bank_card, ?STAT_BANK_CARD}), ?STAT_PAYMENT_STATUS_PENDING),
+        ?STAT_PAYMENT(?STAT_RECURRENT_PAYER({bank_card, ?STAT_BANK_CARD}), ?STAT_PAYMENT_STATUS_PENDING),
         ?STAT_PAYMENT(?STAT_PAYER({bank_card, ?STAT_BANK_CARD}), ?STAT_PAYMENT_STATUS_CAPTURED),
         ?STAT_PAYMENT(?STAT_PAYER({bank_card, ?STAT_BANK_CARD_WITH_TP}), ?STAT_PAYMENT_STATUS_PENDING)
     ]
@@ -658,6 +722,21 @@
     email = <<"test@test.ru">>,
     session_id = SessionId
 }}).
+
+-define(STAT_CUSTOMER_PAYER(PaymentTool), {customer, #merchstat_CustomerPayer{
+    customer_id  = ?STRING,
+    payment_tool = PaymentTool,
+    email        = <<"test@test.ru">>
+}}).
+
+-define(STAT_RECURRENT_PAYER(PaymentTool), {recurrent, #merchstat_RecurrentPayer{
+    payment_tool     = PaymentTool,
+    recurrent_parent = ?RECURRENT_PARENT,
+    phone_number     = ?STRING
+}}).
+
+-define(RECURRENT_PARENT, #merchstat_RecurrentParentPayment{invoice_id = ?STRING, payment_id = ?STRING}).
+
 
 -define(STAT_PAYMENT_STATUS_PENDING, {pending, #merchstat_InvoicePaymentPending{}}).
 
@@ -739,7 +818,6 @@
     payment_system = visa,
     bin = <<"411111">>,
     masked_pan = <<"411111******1111">>
-
 }).
 
 -define(STAT_BANK_CARD_WITH_TP, #merchstat_BankCard{
@@ -769,7 +847,7 @@
         to_time = ?TIMESTAMP
     },
     created_at = ?TIMESTAMP,
-    report_type = provision_of_service,
+    report_type = <<"provision_of_service">>,
     status = created,
     files = [
         #reports_FileMeta{
@@ -780,7 +858,13 @@
                 sha256 = ?SHA256
             }
         }
-    ]
+    ],
+    shop_id = ?STRING,
+    party_id = ?STRING
+}).
+
+-define(FOUND_REPORTS, #'reports_StatReportResponse'{
+    reports = [?REPORT]
 }).
 
 -define(SNAPSHOT, #'Snapshot'{
@@ -889,6 +973,12 @@
                 id = {bank_card, visa}
             },
             #domain_PaymentMethodRef{
+                id = {crypto_currency, bitcoin}
+            },
+            #domain_PaymentMethodRef{
+                id = {crypto_currency, bitcoin_cash}
+            },
+            #domain_PaymentMethodRef{
                 id = {tokenized_bank_card, #domain_TokenizedBankCard{
                     payment_system = mastercard,
                     token_provider = applepay
@@ -924,59 +1014,6 @@
 
 -define(PUT_CARD_RESULT, #'PutCardResult'{
     bank_card = ?BANK_CARD
-}).
-
--define(UNWRAPPED_PAYMENT_TOOL(Details),
-    ?UNWRAPPED_PAYMENT_TOOL(
-        Details,
-        {tokenized_card, #paytoolprv_TokenizedCard{
-            dpan = ?STRING,
-            exp_date = #paytoolprv_ExpDate{
-                month = 10,
-                year = 2018
-            },
-            auth_data = {auth_3ds, #paytoolprv_Auth3DS{
-                cryptogram = ?STRING,
-                eci = ?STRING
-            }}
-        }}
-    )
-).
-
--define(UNWRAPPED_PAYMENT_TOOL(Details, PaymentData), #paytoolprv_UnwrappedPaymentTool{
-    payment_data = PaymentData,
-    card_info = #paytoolprv_CardInfo{
-        display_name = <<"Visa 1234">>,
-        cardholder_name = ?STRING,
-        last_4_digits = <<"1234">>,
-        card_class = debit,
-        payment_system = mastercard
-    },
-    details = Details
-}).
-
--define(APPLE_PAY_DETAILS, {apple, #paytoolprv_ApplePayDetails{
-    transaction_id = ?STRING,
-    amount = ?INTEGER,
-    currency_numeric_code = 643,
-    device_id = ?STRING
-}}).
-
--define(GOOGLE_PAY_DETAILS, {google, #paytoolprv_GooglePayDetails{
-    message_id = ?STRING,
-    message_expiration = ?TIMESTAMP
-}}).
-
--define(BINBASE_LOOKUP_RESULT, ?BINBASE_LOOKUP_RESULT(<<"MASTERCARD">>)).
-
--define(BINBASE_LOOKUP_RESULT(PaymentSystem), #'binbase_ResponseData'{
-    bin_data = #'binbase_BinData' {
-        payment_system = PaymentSystem,
-        bank_name = ?STRING,
-        iso_country_code = <<"KAZ">>,
-        card_type = debit
-    },
-    version = ?INTEGER
 }).
 
 -define(PAYOUT(Type, PayoutSummary), #'payout_processing_Payout'{
@@ -1016,6 +1053,16 @@
     operation_type = payment,
     count = ?INTEGER
 }).
+
+-define(TEST_PAYMENT_TOKEN, ?TEST_PAYMENT_TOKEN(visa)).
+
+-define(TEST_PAYMENT_TOKEN(PaymentSystem), capi_utils:map_to_base64url(#{
+    <<"type"          >> => <<"bank_card">>,
+    <<"token"         >> => ?STRING,
+    <<"payment_system">> => atom_to_binary(PaymentSystem, utf8),
+    <<"bin"           >> => <<"411111">>,
+    <<"masked_pan"    >> => <<"1111">>
+})).
 
 -define(TEST_PAYMENT_SESSION, capi_utils:map_to_base64url(#{
     <<"paymentSession">> => ?STRING,

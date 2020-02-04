@@ -2,7 +2,7 @@
 
 -include_lib("common_test/include/ct.hrl").
 -include_lib("capi_dummy_data.hrl").
--include_lib("dmsl/include/dmsl_domain_config_thrift.hrl").
+-include_lib("damsel/include/dmsl_domain_config_thrift.hrl").
 
 -export([init_suite/2]).
 -export([init_suite/3]).
@@ -15,13 +15,13 @@
 -export([issue_token/4]).
 -export([get_context/1]).
 -export([get_context/2]).
+-export([get_context/3]).
 -export([get_keysource/2]).
 -export([start_mocked_service_sup/1]).
 -export([stop_mocked_service_sup/1]).
 -export([mock_services/2]).
 -export([mock_services_/2]).
 -export([get_lifetime/0]).
--export([unique_id/0]).
 
 -define(CAPI_IP                     , "::").
 -define(CAPI_PORT                   , 8080).
@@ -54,7 +54,7 @@ init_suite(Module, Config, CapiEnv) ->
     Apps2 =
         start_app(dmt_client, [{max_cache_size, #{}}, {service_urls, ServiceURLs}, {cache_update_interval, 50000}]) ++
         start_capi(Config, CapiEnv),
-    [{apps, lists:reverse(Apps2 ++ Apps1)}, {suite_test_sup, SupPid} | Config].
+    [{apps, lists:reverse(Apps1 ++ Apps2)}, {suite_test_sup, SupPid} | Config].
 
 -spec start_app(app_name()) ->
     [app_name()].
@@ -83,18 +83,21 @@ start_capi(Config) ->
     [app_name()].
 
 start_capi(Config, ExtraEnv) ->
+    JwkPath = get_keysource("keys/local/jwk.json", Config),
     CapiEnv = ExtraEnv ++ [
         {ip, ?CAPI_IP},
         {port, ?CAPI_PORT},
         {service_type, real},
-        {authorizers, #{
+        {access_conf, #{
             jwt => #{
-                signee => capi,
                 keyset => #{
-                    % TODO use crypto:generate_key here when move on 21 Erlang
                     capi => {pem_file, get_keysource("keys/local/private.pem", Config)}
                 }
             }
+        }},
+        {lechiffre_opts,  #{
+            encryption_key_path => JwkPath,
+            decryption_key_paths => [JwkPath]
         }}
     ],
     start_app(capi, CapiEnv).
@@ -131,7 +134,17 @@ issue_token(ACL, LifeTime, ExtraProperties) ->
 
 issue_token(PartyID, ACL, LifeTime, ExtraProperties) ->
     Claims = maps:merge(#{?STRING => ?STRING}, ExtraProperties),
-    capi_authorizer_jwt:issue({{PartyID, capi_acl:from_list(ACL)}, Claims}, LifeTime).
+    DomainRoles = #{
+        <<"common-api">> => uac_acl:from_list(ACL)
+    },
+    uac_authorizer_jwt:issue(
+        capi_utils:get_unique_id(),
+        LifeTime,
+        PartyID,
+        DomainRoles,
+        Claims,
+        capi
+    ).
 
 -spec get_context(binary()) ->
     capi_client_lib:context().
@@ -144,6 +157,20 @@ get_context(Token) ->
 
 get_context(Token, ExtraProperties) ->
     capi_client_lib:get_context(?CAPI_URL, Token, 10000, ipv4, ExtraProperties).
+
+-spec get_context(binary(), map(), binary()) ->
+    capi_client_lib:context().
+
+get_context(Token, ExtraProperties, Deadline) ->
+    capi_client_lib:get_context(
+        ?CAPI_URL,
+        Token,
+        10000,
+        ipv4,
+        ExtraProperties,
+        capi_client_lib:default_event_handler(),
+        Deadline
+    ).
 
 % TODO move it to `capi_dummy_service`, looks more appropriate
 
@@ -167,8 +194,8 @@ stop_mocked_service_sup(SupPid) ->
 mock_services(Services, SupOrConfig) ->
     start_woody_client(mock_services_(Services, SupOrConfig)).
 
-start_woody_client(ServiceURLs) ->
-    start_app(capi_woody_client, [{service_urls, ServiceURLs}]).
+start_woody_client(Services) ->
+    start_app(capi_woody_client, [{services, Services}]).
 
 -spec mock_services_(_, _) ->
     _.
@@ -186,7 +213,7 @@ mock_services_(Services, SupPid) when is_pid(SupPid) ->
         #{
             ip => IP,
             port => Port,
-            event_handler => capi_woody_event_handler,
+            event_handler => scoper_woody_event_handler,
             handlers => lists:map(fun mock_service_handler/1, Services)
         }
     ),
@@ -235,9 +262,3 @@ get_lifetime(YY, MM, DD) ->
        <<"months">> => MM,
        <<"days">>   => DD
     }.
-
--spec unique_id() -> binary().
-
-unique_id() ->
-    <<ID:64>> = snowflake:new(),
-    genlib_format:format_int_base(ID, 62).

@@ -2,12 +2,11 @@
 
 -include_lib("common_test/include/ct.hrl").
 
--include_lib("dmsl/include/dmsl_domain_config_thrift.hrl").
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_payment_processing_errors_thrift.hrl").
--include_lib("dmsl/include/dmsl_payment_tool_provider_thrift.hrl").
--include_lib("binbase_proto/include/binbase_binbase_thrift.hrl").
--include_lib("dmsl/include/dmsl_cds_thrift.hrl").
+-include_lib("damsel/include/dmsl_domain_config_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_errors_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_tool_token_thrift.hrl").
+-include_lib("damsel/include/dmsl_cds_thrift.hrl").
 -include_lib("capi_dummy_data.hrl").
 -include_lib("jose/include/jose_jwk.hrl").
 
@@ -30,6 +29,7 @@
     create_payment_qiwi_access_token_ok_test/1,
     create_payment_with_empty_cvv_ok_test/1,
     create_payment_with_googlepay_plain_ok_test/1,
+    create_payment_with_googlepay_encrypt_ok_test/1,
     get_payments_ok_test/1,
     get_payment_by_id_ok_test/1,
     get_client_payment_status_test/1,
@@ -75,6 +75,7 @@ invoice_access_token_tests() ->
         create_payment_qiwi_access_token_ok_test,
         create_payment_with_empty_cvv_ok_test,
         create_payment_with_googlepay_plain_ok_test,
+        create_payment_with_googlepay_encrypt_ok_test,
         get_payments_ok_test,
         get_client_payment_status_test,
         get_payment_by_id_ok_test,
@@ -208,7 +209,8 @@ get_invoice_events_ok_test(Config) ->
 -spec get_invoice_payment_methods_ok_test(config()) ->
     _.
 get_invoice_payment_methods_ok_test(Config) ->
-    capi_ct_helper:mock_services([{invoicing, fun('ComputeTerms', _) -> {ok, ?TERM_SET} end}], Config),
+    capi_ct_helper:mock_services([{invoicing,        fun('ComputeTerms', _) -> {ok, ?TERM_SET} end},
+                                  {party_management, fun('Get', _)          -> {ok, ?PARTY}    end}], Config),
     {ok, _} = capi_client_invoices:get_invoice_payment_methods(?config(context, Config), ?STRING).
 
 -spec create_payment_ok_test(config()) ->
@@ -218,26 +220,15 @@ create_payment_ok_test(Config) ->
     ExternalID = <<"merch_id">>,
     capi_ct_helper:mock_services(
         [
-            {cds_storage, fun
-                ('PutSession', _) -> {ok, ok};
-                ('PutCard', _) -> {ok, ?PUT_CARD_RESULT}
-            end},
             {invoicing, fun('StartPayment', [_, _, IPP]) ->
                 #payproc_InvoicePaymentParams{id = ID, external_id = EID, context = ?CONTENT} = IPP,
                 {ok, ?PAYPROC_PAYMENT(ID, EID)}
             end},
-            {binbase, fun('Lookup', _) -> {ok, ?BINBASE_LOOKUP_RESULT} end},
             {bender, fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(BenderKey)} end}
         ],
         Config
     ),
-    PaymentToolToken = capi_utils:map_to_base64url(#{
-        <<"type"          >> => <<"bank_card">>,
-        <<"token"         >> => ?STRING,
-        <<"payment_system">> => atom_to_binary(visa, utf8),
-        <<"bin"           >> => <<"411111">>,
-        <<"masked_pan"    >> => <<"1111">>
-    }),
+    PaymentToolToken = ?TEST_PAYMENT_TOKEN,
     Req2 = #{
         <<"externalID">> => ExternalID,
         <<"flow">> => #{<<"type">> => <<"PaymentFlowInstant">>},
@@ -249,7 +240,8 @@ create_payment_ok_test(Config) ->
                 <<"email">> => <<"bla@bla.ru">>
             }
         },
-        <<"metadata">> => ?JSON
+        <<"metadata">> => ?JSON,
+        <<"processingDeadline">> => <<"5m">>
     },
     {ok, #{
         <<"id">> := BenderKey,
@@ -261,10 +253,6 @@ create_payment_ok_test(Config) ->
 create_payment_with_empty_cvv_ok_test(Config) ->
     capi_ct_helper:mock_services(
         [
-            {cds_storage, fun
-                ('PutSession', _) -> {ok, ok};
-                ('PutCard', _) -> {ok, ?PUT_CARD_RESULT}
-            end},
             {invoicing, fun
                 ('StartPayment', [_UserInfo, _InvoiceID,
                     #payproc_InvoicePaymentParams{
@@ -279,8 +267,7 @@ create_payment_with_empty_cvv_ok_test(Config) ->
                     }
                 ]) -> {ok, ?PAYPROC_PAYMENT}
              end},
-            {bender, fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end},
-            {binbase, fun('Lookup', _) -> {ok, ?BINBASE_LOOKUP_RESULT} end}
+            {bender, fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end}
         ],
         Config
     ),
@@ -346,21 +333,6 @@ create_payment_qiwi_access_token_ok_test(Config) ->
     _.
 create_payment_with_googlepay_plain_ok_test(Config) ->
     capi_ct_helper:mock_services([
-        {payment_tool_provider_google_pay,
-            fun('Unwrap', _) ->
-                {ok, ?UNWRAPPED_PAYMENT_TOOL(
-                    ?GOOGLE_PAY_DETAILS,
-                    {card, #paytoolprv_Card{
-                        pan = <<"1234567890123456">>,
-                        exp_date = #paytoolprv_ExpDate{month = 10, year = 2018}
-                    }}
-                )}
-            end
-        },
-        {cds_storage, fun
-            ('PutSession', _) -> {ok, ok};
-            ('PutCard', _) -> {ok, ?PUT_CARD_RESULT}
-        end},
         {invoicing, fun
                 ('StartPayment', [_UserInfo, _InvoiceID,
                     #payproc_InvoicePaymentParams{
@@ -379,18 +351,9 @@ create_payment_with_googlepay_plain_ok_test(Config) ->
                     }
                 ]) -> {ok, ?PAYPROC_PAYMENT}
             end},
-        {binbase,
-            fun('Lookup', _) -> {ok, ?BINBASE_LOOKUP_RESULT} end
-        },
         {bender, fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end}
     ], Config),
-    PaymentToolToken = capi_utils:map_to_base64url(#{
-        <<"type"          >> => <<"bank_card">>,
-        <<"token"         >> => ?STRING,
-        <<"payment_system">> => atom_to_binary(mastercard, utf8),
-        <<"bin"           >> => <<"411111">>,
-        <<"masked_pan"    >> => <<"1111">>
-    }),
+    PaymentToolToken = ?TEST_PAYMENT_TOKEN(mastercard),
     Req2 = #{
         <<"flow">> => #{<<"type">> => <<"PaymentFlowInstant">>},
         <<"payer">> => #{
@@ -404,16 +367,71 @@ create_payment_with_googlepay_plain_ok_test(Config) ->
     },
     {ok, _} = capi_client_payments:create_payment(?config(context, Config), Req2, ?STRING).
 
+-spec create_payment_with_googlepay_encrypt_ok_test(_) ->
+    _.
+create_payment_with_googlepay_encrypt_ok_test(Config) ->
+    capi_ct_helper:mock_services([
+        {invoicing, fun
+                ('StartPayment', [_UserInfo, _InvoiceID,
+                    #payproc_InvoicePaymentParams{
+                        payer = {payment_resource, #payproc_PaymentResourcePayerParams{
+                            resource = #domain_DisposablePaymentResource{
+                                payment_tool = {
+                                    bank_card,
+                                    #domain_BankCard{
+                                        is_cvv_empty = undefined,
+                                        token_provider = undefined,
+                                        payment_system = mastercard,
+                                        cardholder_name = <<"Degus Degusovich">>
+                                    }
+                                }
+                            }
+                        }}
+                    }
+                ]) -> {ok, ?PAYPROC_PAYMENT}
+            end},
+        {bender, fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end}
+    ], Config),
+
+    PaymentToolToken = get_encrypted_token(),
+    Req2 = #{
+        <<"flow">> => #{<<"type">> => <<"PaymentFlowInstant">>},
+        <<"payer">> => #{
+            <<"payerType">> => <<"PaymentResourcePayer">>,
+            <<"paymentSession">> => ?TEST_PAYMENT_SESSION,
+            <<"paymentToolToken">> => PaymentToolToken,
+            <<"contactInfo">> => #{
+                <<"email">> => <<"bla@bla.ru">>
+            }
+        }
+    },
+    {ok, _} = capi_client_payments:create_payment(?config(context, Config), Req2, ?STRING).
+
+get_encrypted_token() ->
+    PaymentTool = {bank_card, #domain_BankCard{
+        token = ?TEST_PAYMENT_TOKEN(mastercard),
+        payment_system = mastercard,
+        bin = <<>>,
+        masked_pan = <<"1111">>,
+        cardholder_name = <<"Degus Degusovich">>
+    }},
+    capi_crypto:create_encrypted_payment_tool_token(<<"idemp key">>, PaymentTool).
+
 -spec get_payments_ok_test(config()) ->
     _.
 get_payments_ok_test(Config) ->
-    capi_ct_helper:mock_services([{invoicing, fun('Get', _) -> {ok, ?PAYPROC_INVOICE} end}], Config),
+    Payment0 = ?PAYPROC_PAYMENT(?PAYMENT_WITH_CUSTOMER_PAYER, [?REFUND], [?ADJUSTMENT]),
+    Payment1 = ?PAYPROC_PAYMENT(?PAYMENT_WITH_RECURRENT_PAYER, [?REFUND], [?ADJUSTMENT]),
+    Payment2 = ?PAYPROC_PAYMENT(?PAYMENT, [?REFUND], [?ADJUSTMENT]),
+    Result   = ?PAYPROC_INVOICE([Payment0, Payment1, Payment2]),
+    capi_ct_helper:mock_services([{invoicing, fun('Get', _) -> {ok, Result} end}], Config),
     {ok, _} = capi_client_payments:get_payments(?config(context, Config), ?STRING).
 
 -spec get_payment_by_id_ok_test(config()) ->
     _.
 get_payment_by_id_ok_test(Config) ->
-    capi_ct_helper:mock_services([{invoicing, fun('GetPayment', _) -> {ok, ?PAYPROC_PAYMENT} end}], Config),
+    Result = ?PAYPROC_PAYMENT(?PAYMENT_WITH_RECURRENT_PAYER, [?REFUND], [?ADJUSTMENT]),
+    capi_ct_helper:mock_services([{invoicing, fun('GetPayment', _) -> {ok, Result} end}], Config),
     {ok, _} = capi_client_payments:get_payment_by_id(?config(context, Config), ?STRING, ?STRING).
 
 -spec get_client_payment_status_test(config()) ->
@@ -433,7 +451,7 @@ cancel_payment_ok_test(Config) ->
 -spec capture_payment_ok_test(config()) ->
     _.
 capture_payment_ok_test(Config) ->
-    capi_ct_helper:mock_services([{invoicing, fun('CapturePaymentNew', _) -> {ok, ok} end}], Config),
+    capi_ct_helper:mock_services([{invoicing, fun('CapturePayment', _) -> {ok, ok} end}], Config),
     Req = #{
         <<"reason">> => ?STRING
     },
@@ -442,11 +460,17 @@ capture_payment_ok_test(Config) ->
 -spec capture_partial_payment_ok_test(config()) ->
     _.
 capture_partial_payment_ok_test(Config) ->
-    capi_ct_helper:mock_services([{invoicing, fun('CapturePaymentNew', _) -> {ok, ok} end}], Config),
+    capi_ct_helper:mock_services([{invoicing, fun('CapturePayment', [_, _, _,
+        #payproc_InvoicePaymentCaptureParams{
+            cash = ?CASH,
+            cart = ?THRIFT_INVOICE_CART
+        }
+    ]) -> {ok, ok} end}], Config),
     Req = #{
         <<"reason">> => ?STRING,
-        <<"amount">> => 123,
-        <<"currency">> => ?RUB
+        <<"amount">> => ?INTEGER,
+        <<"currency">> => ?RUB,
+        <<"cart">> => ?INVOICE_CART
     },
     ok = capi_client_payments:capture_payment(?config(context, Config), Req, ?STRING, ?STRING).
 
@@ -455,23 +479,12 @@ capture_partial_payment_ok_test(Config) ->
 create_first_recurrent_payment_ok_test(Config) ->
     capi_ct_helper:mock_services(
         [
-            {cds_storage, fun
-                ('PutSession', _) -> {ok, ok};
-                ('PutCard', _) -> {ok, ?PUT_CARD_RESULT}
-            end},
             {invoicing, fun('StartPayment', _) -> {ok, ?PAYPROC_PAYMENT} end},
-            {binbase, fun('Lookup', _) -> {ok, ?BINBASE_LOOKUP_RESULT} end},
             {bender,    fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end}
         ],
         Config
     ),
-    PaymentToolToken = capi_utils:map_to_base64url(#{
-        <<"type"          >> => <<"bank_card">>,
-        <<"token"         >> => ?STRING,
-        <<"payment_system">> => atom_to_binary(visa, utf8),
-        <<"bin"           >> => <<"411111">>,
-        <<"masked_pan"    >> => <<"1111">>
-    }),
+    PaymentToolToken = ?TEST_PAYMENT_TOKEN,
     Req2 = #{
         <<"flow">> => #{<<"type">> => <<"PaymentFlowInstant">>},
         <<"makeRecurrent">> => true,
@@ -491,10 +504,6 @@ create_first_recurrent_payment_ok_test(Config) ->
 create_second_recurrent_payment_ok_test(Config) ->
     capi_ct_helper:mock_services(
         [
-            {cds_storage, fun
-                ('PutSession', _) -> {ok, ok};
-                ('PutCard', _) -> {ok, ?PUT_CARD_RESULT}
-            end},
             {invoicing, fun('StartPayment', _) -> {ok, ?PAYPROC_PAYMENT} end},
             {bender,    fun('GenerateID', _) -> {ok, capi_ct_helper_bender:get_result(<<"bender_key">>)} end}
         ],

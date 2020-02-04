@@ -1,8 +1,7 @@
 -module(capi_handler_decoder_invoicing).
 
--include_lib("dmsl/include/dmsl_payment_processing_thrift.hrl").
--include_lib("dmsl/include/dmsl_domain_thrift.hrl").
--include_lib("dmsl/include/dmsl_merch_stat_thrift.hrl").
+-include_lib("damsel/include/dmsl_payment_processing_thrift.hrl").
+-include_lib("damsel/include/dmsl_merch_stat_thrift.hrl").
 
 -export([decode_user_interaction_form/1]).
 -export([decode_user_interaction/1]).
@@ -40,6 +39,18 @@ decode_user_interaction({redirect, BrowserRequest}) ->
     #{
         <<"interactionType">> => <<"Redirect">>,
         <<"request">> => decode_browser_request(BrowserRequest)
+    };
+decode_user_interaction({qr_code_display_request, QrCodeDisplayRequest}) ->
+    #{
+        <<"interactionType">> => <<"QrCodeDisplayRequest">>,
+        <<"qrCode">> => decode_qr_code(QrCodeDisplayRequest)
+    };
+decode_user_interaction({crypto_currency_transfer_request, CryptoCurrencyTransferRequest}) ->
+    #{
+        <<"interactionType">> => <<"CryptoCurrencyTransferRequest">>,
+        <<"cryptoAddress">> => CryptoCurrencyTransferRequest#'CryptoCurrencyTransferRequest'.crypto_address,
+        <<"symbolicCode">> => decode_crypto_symcode(CryptoCurrencyTransferRequest),
+        <<"cryptoAmount">> => decode_crypto_amount(CryptoCurrencyTransferRequest)
     }.
 
 decode_browser_request({get_request, #'BrowserGetRequest'{uri = UriTemplate}}) ->
@@ -53,6 +64,55 @@ decode_browser_request({post_request, #'BrowserPostRequest'{uri = UriTemplate, f
         <<"uriTemplate">> => UriTemplate,
         <<"form">> => decode_user_interaction_form(UserInteractionForm)
     }.
+
+decode_qr_code(#'QrCodeDisplayRequest'{qr_code = QrCode}) ->
+    QrCode#'QrCode'.payload.
+
+decode_crypto_symcode(#'CryptoCurrencyTransferRequest'{crypto_cash = Cash}) ->
+    Cash#'CryptoCash'.crypto_symbolic_code.
+
+decode_crypto_amount(#'CryptoCurrencyTransferRequest'{crypto_cash = Cash}) ->
+    % apparently Q is always a power of ten
+    Amount     = Cash#'CryptoCash'.crypto_amount,
+    ok         = ensure_correct_exponent(Amount),
+    Integral   = decode_integral_part(Amount),
+    Fractional = decode_fractional_part(Amount),
+    build_decoded_crypto_amount(Integral, Fractional).
+
+ensure_correct_exponent(#'Rational'{q = Q}) ->
+    Log = math:log10(Q),
+    case Log - trunc(Log) of
+        0.0 -> ok;
+        _   -> error('expected a power of 10 denominator')
+    end.
+
+decode_integral_part(#'Rational'{p = P, q = Q}) ->
+    erlang:integer_to_binary(P div Q).
+
+decode_fractional_part(#'Rational'{p = P, q = Q}) ->
+    Exponent = get_exponent(Q),
+    build_fractional(P rem Q, Exponent).
+
+get_exponent(Q) ->
+    erlang:trunc(math:log10(Q)).
+
+build_fractional(_Fractional, _Exponent = 0) ->
+    <<>>;
+build_fractional(Fractional, Exponent) ->
+    BinaryFractional = erlang:integer_to_binary(Fractional),
+    strip_trailing_zeroes(genlib_string:pad_numeric(BinaryFractional, Exponent)).
+
+strip_trailing_zeroes(Fractional) ->
+    ByteSize = byte_size(Fractional) - 1,
+    case Fractional of
+        <<Prefix:ByteSize/bytes, "0">> -> strip_trailing_zeroes(Prefix);
+        Fractional -> Fractional
+    end.
+
+build_decoded_crypto_amount(Integral, <<>>) ->
+    Integral;
+build_decoded_crypto_amount(Integral, Fractional) ->
+    <<Integral/binary, ".", Fractional/binary>>.
 
 -spec decode_user_interaction_form(map()) ->
     capi_handler_decoder_utils:decode_data().
@@ -78,33 +138,50 @@ decode_payment(InvoiceID, Payment, Context) ->
         amount   = Amount,
         currency = Currency
     } = Payment#domain_InvoicePayment.cost,
-    capi_handler_utils:merge_and_compact(#{
-        <<"id"           >> => Payment#domain_InvoicePayment.id,
-        <<"externalID"   >> => Payment#domain_InvoicePayment.external_id,
-        <<"invoiceID"    >> => InvoiceID,
-        <<"createdAt"    >> => Payment#domain_InvoicePayment.created_at,
-        % TODO whoops, nothing to get it from yet
-        <<"flow"         >> => decode_flow(Payment#domain_InvoicePayment.flow),
-        <<"amount"       >> => Amount,
-        <<"currency"     >> => capi_handler_decoder_utils:decode_currency(Currency),
-        <<"payer"        >> => decode_payer(Payment#domain_InvoicePayment.payer),
-        <<"makeRecurrent">> => decode_make_recurrent(Payment#domain_InvoicePayment.make_recurrent),
-        <<"metadata"     >> => capi_handler_decoder_utils:decode_context(Payment#domain_InvoicePayment.context)
-    }, decode_payment_status(Payment#domain_InvoicePayment.status, Context)).
+    capi_handler_utils:merge_and_compact(
+        #{
+            <<"id"           >> => Payment#domain_InvoicePayment.id,
+            <<"externalID"   >> => Payment#domain_InvoicePayment.external_id,
+            <<"invoiceID"    >> => InvoiceID,
+            <<"createdAt"    >> => Payment#domain_InvoicePayment.created_at,
+            % TODO whoops, nothing to get it from yet
+            <<"flow"         >> => decode_flow(Payment#domain_InvoicePayment.flow),
+            <<"amount"       >> => Amount,
+            <<"currency"     >> => capi_handler_decoder_utils:decode_currency(Currency),
+            <<"payer"        >> => decode_payer(Payment#domain_InvoicePayment.payer),
+            <<"makeRecurrent">> => decode_make_recurrent(Payment#domain_InvoicePayment.make_recurrent),
+            <<"metadata"     >> => capi_handler_decoder_utils:decode_context(Payment#domain_InvoicePayment.context)
+        },
+        decode_payment_status(Payment#domain_InvoicePayment.status, Context)
+    ).
 
-decode_payer({customer, #domain_CustomerPayer{customer_id = ID}}) ->
+decode_payer({customer, #domain_CustomerPayer{
+    payment_tool = PaymentTool,
+    customer_id  = ID
+}}) ->
     #{
         <<"payerType" >> => <<"CustomerPayer">>,
-        <<"customerID">> => ID
+        <<"customerID">> => ID,
+        <<"paymentToolToken"  >> => capi_handler_decoder_party:decode_payment_tool_token(PaymentTool),
+        <<"paymentToolDetails">> => capi_handler_decoder_party:decode_payment_tool_details(PaymentTool)
     };
-decode_payer({recurrent, #domain_RecurrentPayer{recurrent_parent = RecurrentParent, contact_info = ContactInfo}}) ->
+decode_payer({recurrent, #domain_RecurrentPayer{
+    payment_tool     = PaymentTool,
+    recurrent_parent = RecurrentParent,
+    contact_info     = ContactInfo
+}}) ->
     #{
-        <<"payerType">> => <<"RecurrentPayer">>,
-        <<"contactInfo">> => capi_handler_decoder_party:decode_contact_info(ContactInfo),
+        <<"payerType"             >> => <<"RecurrentPayer">>,
+        <<"paymentToolToken"      >> => capi_handler_decoder_party:decode_payment_tool_token(PaymentTool),
+        <<"paymentToolDetails"    >> => capi_handler_decoder_party:decode_payment_tool_details(PaymentTool),
+        <<"contactInfo"           >> => capi_handler_decoder_party:decode_contact_info(ContactInfo),
         <<"recurrentParentPayment">> => decode_recurrent_parent(RecurrentParent)
     };
-decode_payer({payment_resource, #domain_PaymentResourcePayer{resource = Resource, contact_info = ContactInfo}}) ->
-    maps:merge(
+decode_payer({payment_resource, #domain_PaymentResourcePayer{
+    resource     = Resource,
+    contact_info = ContactInfo
+}}) ->
+  capi_handler_utils:merge_and_compact(
         #{
             <<"payerType"  >> => <<"PaymentResourcePayer">>,
             <<"contactInfo">> => capi_handler_decoder_party:decode_contact_info(ContactInfo)
@@ -247,11 +324,12 @@ decode_refund(Refund, Context) ->
     #domain_Cash{amount = Amount, currency = Currency} = Refund#domain_InvoicePaymentRefund.cash,
     capi_handler_utils:merge_and_compact(
         #{
-            <<"id"       >> => Refund#domain_InvoicePaymentRefund.id,
-            <<"createdAt">> => Refund#domain_InvoicePaymentRefund.created_at,
-            <<"reason"   >> => Refund#domain_InvoicePaymentRefund.reason,
-            <<"amount"   >> => Amount,
-            <<"currency" >> => capi_handler_decoder_utils:decode_currency(Currency)
+            <<"id"        >> => Refund#domain_InvoicePaymentRefund.id,
+            <<"createdAt" >> => Refund#domain_InvoicePaymentRefund.created_at,
+            <<"reason"    >> => Refund#domain_InvoicePaymentRefund.reason,
+            <<"amount"    >> => Amount,
+            <<"currency"  >> => capi_handler_decoder_utils:decode_currency(Currency),
+            <<"externalID">> => Refund#domain_InvoicePaymentRefund.external_id
         },
         decode_refund_status(Refund#domain_InvoicePaymentRefund.status, Context)
     ).
@@ -376,12 +454,14 @@ decode_payment_method(digital_wallet, Providers) ->
     [#{<<"method">> => <<"DigitalWallet">>, <<"providers">> => lists:map(fun genlib:to_binary/1, Providers)}];
 decode_payment_method(tokenized_bank_card, TokenizedBankCards) ->
     decode_tokenized_bank_cards(TokenizedBankCards);
-decode_payment_method(crypto_wallet, CryptoCurrencies) ->
+decode_payment_method(crypto_currency, CryptoCurrencies) ->
+    Decoder = fun capi_handler_decoder_utils:convert_crypto_currency_to_swag/1,
     [#{
         <<"method">> => <<"CryptoWallet">>,
-        <<"cryptoCurrency">> =>
-            lists:map(fun capi_handler_decoder_utils:convert_crypto_currency_to_swag/1, CryptoCurrencies)
-    }].
+        <<"cryptoCurrencies">> => lists:map(Decoder, CryptoCurrencies)
+    }];
+decode_payment_method(mobile, MobileOperators) ->
+    [#{<<"method">> => <<"MobileCommerce">>, <<"operators">> => lists:map(fun genlib:to_binary/1, MobileOperators)}].
 
 decode_tokenized_bank_cards(TokenizedBankCards) ->
     PropTokenizedBankCards = [
@@ -423,3 +503,28 @@ make_invoice_and_token(Invoice, PartyID, ExtraProperties) ->
             ExtraProperties
         )
     }.
+
+%%
+
+-ifdef(EUNIT).
+
+-include_lib("eunit/include/eunit.hrl").
+
+-spec test() -> _.
+
+-spec crypto_amount_decoder_test() -> _.
+crypto_amount_decoder_test() ->
+    ?assertError('expected a power of 10 denominator', decode_crypto_amount(build_request(1, 2))),
+    ?assertEqual(<<"1100000007" >>, decode_crypto_amount(build_request(1100000007, 1        ))),
+    ?assertEqual(<< "1"         >>, decode_crypto_amount(build_request(100000000 , 100000000))),
+    ?assertEqual(<< "1.1"       >>, decode_crypto_amount(build_request(110000000 , 100000000))),
+    ?assertEqual(<<"11.00000007">>, decode_crypto_amount(build_request(1100000007, 100000000))),
+    ?assertEqual(<< "0.11000007">>, decode_crypto_amount(build_request(11000007  , 100000000))),
+    ?assertEqual(<< "0.110007"  >>, decode_crypto_amount(build_request(11000700  , 100000000))).
+
+build_request(P, Q) ->
+    Amount = #'Rational'{p = P, q = Q},
+    Cash = #'CryptoCash'{crypto_amount = Amount, crypto_symbolic_code = <<>>},
+    #'CryptoCurrencyTransferRequest'{crypto_address = <<>>, crypto_cash = Cash}.
+
+-endif.

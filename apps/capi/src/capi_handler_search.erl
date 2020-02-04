@@ -1,6 +1,6 @@
 -module(capi_handler_search).
 
--include_lib("dmsl/include/dmsl_merch_stat_thrift.hrl").
+-include_lib("damsel/include/dmsl_merch_stat_thrift.hrl").
 
 -behaviour(capi_handler).
 -export([process_request/3]).
@@ -34,6 +34,7 @@ process_request('SearchInvoices', Req, Context) ->
         <<"invoice_amount"           >> => genlib_map:get('invoiceAmount', Req),
         <<"payment_token_provider"   >> => genlib_map:get('bankCardTokenProvider', Req),
         <<"payment_system"           >> => genlib_map:get('bankCardPaymentSystem', Req),
+        <<"payment_rrn"              >> => genlib_map:get('rrn', Req),
         <<"payment_first6"           >> => genlib_map:get('first6', Req),
         <<"payment_last4"            >> => genlib_map:get('last4', Req)
     },
@@ -63,7 +64,7 @@ process_request('SearchPayments', Req, Context) ->
         <<"payment_token_provider"   >> => genlib_map:get('bankCardTokenProvider', Req),
         <<"payment_system"           >> => genlib_map:get('bankCardPaymentSystem', Req),
         <<"payment_rrn"              >> => genlib_map:get('rrn', Req),
-        <<"payment_approval_code"    >> => genlib_map:get('approval_code', Req),
+        <<"payment_approval_code"    >> => genlib_map:get('approvalCode', Req),
         <<"payment_first6"           >> => genlib_map:get('first6', Req),
         <<"payment_last4"            >> => genlib_map:get('last4', Req)
     },
@@ -96,6 +97,8 @@ process_request('SearchRefunds', Req, Context) ->
         <<"invoice_id"               >> => genlib_map:get('invoiceID', Req),
         <<"payment_id"               >> => genlib_map:get('paymentID', Req),
         <<"refund_id"                >> => genlib_map:get('refundID', Req),
+        <<"payment_rrn"              >> => genlib_map:get('rrn', Req),
+        <<"payment_approval_code"    >> => genlib_map:get('approvalCode', Req),
         <<"from_time"                >> => capi_handler_utils:get_time('fromTime', Req),
         <<"to_time"                  >> => capi_handler_utils:get_time('toTime', Req),
         <<"refund_status"            >> => genlib_map:get('refundStatus', Req)
@@ -208,7 +211,9 @@ decode_stat_payment(Stat, Context) ->
         <<"makeRecurrent"  >> => capi_handler_decoder_invoicing:decode_make_recurrent(
             Stat#merchstat_StatPayment.make_recurrent
         ),
-        <<"statusChangedAt">> => decode_status_changed_at(Stat#merchstat_StatPayment.status)
+        <<"statusChangedAt">> => decode_status_changed_at(Stat#merchstat_StatPayment.status),
+        <<"cart"           >> => capi_handler_decoder_invoicing:decode_invoice_cart(Stat#merchstat_StatPayment.cart)
+
     }, decode_stat_payment_status(Stat#merchstat_StatPayment.status, Context)).
 
 decode_stat_tx_info(undefined) ->
@@ -222,39 +227,45 @@ decode_stat_tx_info(TransactionInfo) ->
     },
     genlib_map:compact(ParsedTransactionInfo).
 
-decode_stat_payer({customer, #merchstat_CustomerPayer{customer_id = ID}}) ->
+decode_stat_payer({customer, #merchstat_CustomerPayer{
+    customer_id  = ID,
+    payment_tool = PaymentTool
+}}) ->
     #{
-        <<"payerType" >> => <<"CustomerPayer">>,
-        <<"customerID">> => ID
+        <<"payerType"         >> => <<"CustomerPayer">>,
+        <<"paymentToolToken"  >> => decode_stat_payment_tool_token(PaymentTool),
+        <<"paymentToolDetails">> => decode_stat_payment_tool_details(PaymentTool),
+        <<"customerID"        >> => ID
     };
-decode_stat_payer({recurrent, RecurrentPayer}) ->
-    #merchstat_RecurrentPayer{
-        recurrent_parent = RecurrentParent,
-        phone_number = PhoneNumber,
-        email = Email
-    } = RecurrentPayer,
+decode_stat_payer({recurrent, #merchstat_RecurrentPayer{
+    payment_tool     = PaymentTool,
+    recurrent_parent = RecurrentParent,
+    phone_number     = PhoneNumber,
+    email            = Email
+}}) ->
     #{
-        <<"payerType">> => <<"RecurrentPayer">>,
-        <<"contactInfo">> => genlib_map:compact(#{
+        <<"payerType"         >> => <<"RecurrentPayer">>,
+        <<"paymentToolToken"  >> => decode_stat_payment_tool_token(PaymentTool),
+        <<"paymentToolDetails">> => decode_stat_payment_tool_details(PaymentTool),
+        <<"contactInfo"       >> => genlib_map:compact(#{
             <<"phoneNumber">> => PhoneNumber,
             <<"email"      >> => Email
         }),
         <<"recurrentParentPayment">> => capi_handler_decoder_invoicing:decode_recurrent_parent(RecurrentParent)
     };
-decode_stat_payer({payment_resource, PaymentResource}) ->
-    #merchstat_PaymentResourcePayer{
-        payment_tool = PaymentTool,
-        session_id = PaymentSession,
-        fingerprint = Fingerprint,
-        ip_address = IP,
-        phone_number = PhoneNumber,
-        email = Email
-    } = PaymentResource,
+decode_stat_payer({payment_resource, #merchstat_PaymentResourcePayer{
+    payment_tool = PaymentTool,
+    session_id   = PaymentSession,
+    fingerprint  = Fingerprint,
+    ip_address   = IP,
+    phone_number = PhoneNumber,
+    email        = Email
+}}) ->
     genlib_map:compact(#{
         <<"payerType"         >> => <<"PaymentResourcePayer">>,
         <<"paymentToolToken"  >> => decode_stat_payment_tool_token(PaymentTool),
-        <<"paymentSession"    >> => PaymentSession,
         <<"paymentToolDetails">> => decode_stat_payment_tool_details(PaymentTool),
+        <<"paymentSession"    >> => PaymentSession,
         <<"clientInfo"        >> => genlib_map:compact(#{
             <<"ip"         >> => IP,
             <<"fingerprint">> => Fingerprint
@@ -296,7 +307,11 @@ decode_stat_payment_tool_token({bank_card, BankCard}) ->
 decode_stat_payment_tool_token({payment_terminal, PaymentTerminal}) ->
     decode_payment_terminal(PaymentTerminal);
 decode_stat_payment_tool_token({digital_wallet, DigitalWallet}) ->
-    decode_digital_wallet(DigitalWallet).
+    decode_digital_wallet(DigitalWallet);
+decode_stat_payment_tool_token({crypto_currency, CryptoCurrency}) ->
+    decode_crypto_wallet(CryptoCurrency);
+decode_stat_payment_tool_token({mobile_commerce, MobileCommerce}) ->
+    decode_mobile_commerce(MobileCommerce).
 
 decode_bank_card(#merchstat_BankCard{
     'token'          = Token,
@@ -335,16 +350,51 @@ decode_digital_wallet(#merchstat_DigitalWallet{
         <<"id"      >> => ID
     }).
 
+decode_crypto_wallet(CryptoCurrency) ->
+    capi_utils:map_to_base64url(#{
+        <<"type"           >> => <<"crypto_wallet">>,
+        <<"crypto_currency">> => capi_handler_decoder_utils:convert_crypto_currency_to_swag(CryptoCurrency)
+    }).
+
+decode_mobile_commerce(MobileCommerce) ->
+    #merchstat_MobileCommerce{
+        operator = Operator,
+        phone = #merchstat_MobilePhone{
+            cc = Cc,
+            ctn = Ctn
+        }
+    } = MobileCommerce,
+    Phone = #{<<"cc">> => Cc, <<"ctn">> => Ctn},
+    capi_utils:map_to_base64url(#{
+        <<"type">> => <<"mobile_commerce">>,
+        <<"phone">> => Phone,
+        <<"operator">> => atom_to_binary(Operator, utf8)
+    }).
+
 decode_stat_payment_tool_details({bank_card, V}) ->
     decode_bank_card_details(V, #{<<"detailsType">> => <<"PaymentToolDetailsBankCard">>});
 decode_stat_payment_tool_details({payment_terminal, V}) ->
     decode_payment_terminal_details(V, #{<<"detailsType">> => <<"PaymentToolDetailsPaymentTerminal">>});
 decode_stat_payment_tool_details({digital_wallet, V}) ->
-    decode_digital_wallet_details(V, #{<<"detailsType">> => <<"PaymentToolDetailsDigitalWallet">>}).
+    decode_digital_wallet_details(V, #{<<"detailsType">> => <<"PaymentToolDetailsDigitalWallet">>});
+decode_stat_payment_tool_details({crypto_currency, CryptoCurrency}) ->
+    #{
+        <<"detailsType">> => <<"PaymentToolDetailsCryptoWallet">>,
+        <<"cryptoCurrency">> => capi_handler_decoder_utils:convert_crypto_currency_to_swag(CryptoCurrency)
+    };
+decode_stat_payment_tool_details({mobile_commerce, MobileCommerce}) ->
+    #merchstat_MobileCommerce{
+        phone = Phone
+    } = MobileCommerce,
+    PhoneNumber = gen_phone_number(decode_mobile_phone(Phone)),
+    #{
+        <<"detailsType">> => <<"PaymentToolDetailsMobileCommerce">>,
+        <<"phoneNumber">> => mask_phone_number(PhoneNumber)
+    }.
 
 decode_bank_card_details(BankCard, V) ->
     LastDigits = capi_handler_decoder_utils:decode_last_digits(BankCard#merchstat_BankCard.masked_pan),
-    Bin = BankCard#merchstat_BankCard.bin,
+    Bin = capi_handler_decoder_utils:decode_bank_card_bin(BankCard#merchstat_BankCard.bin),
     capi_handler_utils:merge_and_compact(V, #{
         <<"last4">>     => LastDigits,
         <<"first6">>    => Bin,
@@ -495,7 +545,9 @@ decode_stat_refund(Refund, Context) ->
             <<"createdAt">> => Refund#merchstat_StatRefund.created_at,
             <<"amount">>    => Refund#merchstat_StatRefund.amount,
             <<"currency">>  => Refund#merchstat_StatRefund.currency_symbolic_code,
-            <<"reason">>    => Refund#merchstat_StatRefund.reason
+            <<"reason">>    => Refund#merchstat_StatRefund.reason,
+            <<"cart">>      => capi_handler_decoder_invoicing:decode_invoice_cart(
+                Refund#merchstat_StatRefund.cart)
         },
         decode_stat_refund_status(Refund#merchstat_StatRefund.status, Context)
     ).
@@ -512,3 +564,9 @@ decode_stat_refund_status({Status, StatusInfo}, Context) ->
         <<"status">> => genlib:to_binary(Status),
         <<"error" >> => Error
     }.
+
+decode_mobile_phone(#merchstat_MobilePhone{cc = Cc, ctn = Ctn}) ->
+    #{<<"cc">> => Cc, <<"ctn">> => Ctn}.
+
+gen_phone_number(#{<<"cc">> := Cc, <<"ctn">> := Ctn}) ->
+    <<"+", Cc/binary, Ctn/binary>>.
